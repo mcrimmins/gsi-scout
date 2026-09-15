@@ -1,0 +1,7 @@
+.Renviron
+.git
+.gitignore
+.Rproj.user
+*.Rproj
+README.md
+data/cache/

@@ -1,0 +1,11 @@
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.Renviron
+## `data/cache/` -- excluding the whole trailing-slash pattern (as it read
+## before 2026-09-15) silently defeats the negation below: git can't
+## re-include a file inside an already-excluded directory. `data/cache/*`
+## excludes its contents instead, which the negation can then override.
+data/cache/*
+!data/cache/.gitkeep
