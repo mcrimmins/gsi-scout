@@ -39,6 +39,14 @@ data/cache/         per-point cached fetches (gitignored, not deployed --
 data-raw/make_sample_cache.R   generates a SYNTHETIC offline cache for the
                     app's default point, for UI/layout work -- see below
 deploy.R            command-line deploy to Posit Connect -- see its header
+docs/live-fuel-moisture.md   reference notes on gsi_to_lfm() / herb_load_transfer()
+                    -- equations, plain-language explanation, and citations
+                    for the GSI-to-fuel-moisture steps in R/gsi.R
+docs/nfdrs4-notes.md   research notes comparing R/gsi.R against the actual
+                    NFDRS4 reference implementation (firelab/NFDRS4) --
+                    confirmed matches and several discrepancies (smoothing
+                    window, green-up threshold default, the herb curing
+                    formula) not yet decided on or implemented
 ```
 
 ## Iterating on the UI without hitting Open-Meteo
