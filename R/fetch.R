@@ -23,10 +23,14 @@
 ##     script this was ported from only fetched these for the two focal
 ##     years, which is fine for Glass Box's single-year figures but not
 ##     enough for a climatology
-##   rh_mean, rh_min, soilt_0_7
+##   soilt_0_7                                       -- soil temperature,
+##     also full record as of 2026-09-18, at Mike's request, same reasoning
+##     as soil moisture above -- it's on the Climatology reference tab now,
+##     so it needs the full band too
+##   rh_mean, rh_min
 ##     -- only populated for `year_to` and the year before it (the "focal"
-##        pass); NA in earlier years. Nothing in GSI Scout plots these against
-##        a climatology, so there's no reason to pay Open-Meteo's per-variable
+##        pass); NA in earlier years. Nothing in GSI Scout plots their
+##        climatology, so there's no reason to pay Open-Meteo's per-variable
 ##        cost for the full record on them too.
 ##
 ## Caching: every point/year-range/variable-set chunk is cached to disk under
@@ -50,16 +54,17 @@ DAILY <- c(
 )
 ## Soil moisture moved into the LONG pull (2026-09-15, at Mike's request) so
 ## it gets a real 1991-2020 climatology band like the other variables, not
-## just the two focal years. This roughly 2.5x's the cost of the long pass
-## (2 variables -> 5, and Open-Meteo's free-tier cost scales with variables x
-## period) -- worth it for a climatology, but it means a NEW point's first
-## fetch is noticeably slower than before. Relative humidity and soil
-## temperature stay focal-only: nothing in this app plots their climatology,
-## so there's no reason to pay for 35 years of them.
+## just the two focal years. Soil temperature followed the same move
+## (2026-09-18, at Mike's request) once it went on the Climatology reference
+## tab. This roughly 3x's the cost of the long pass (2 variables -> 6, and
+## Open-Meteo's free-tier cost scales with variables x period) -- worth it
+## for a climatology, but it means a NEW point's first fetch is noticeably
+## slower than before. Relative humidity stays focal-only: nothing in this
+## app plots its climatology, so there's no reason to pay for 35 years of it.
 HOURLY_LONG <- c("dew_point_2m", "vapour_pressure_deficit",
                  "soil_moisture_0_to_7cm", "soil_moisture_7_to_28cm",
-                 "soil_moisture_28_to_100cm")
-HOURLY_FOCAL <- c(HOURLY_LONG, "relative_humidity_2m", "soil_temperature_0_to_7cm")
+                 "soil_moisture_28_to_100cm", "soil_temperature_0_to_7cm")
+HOURLY_FOCAL <- c(HOURLY_LONG, "relative_humidity_2m")
 
 #' A filesystem-safe key for a point, rounded to ~100 m so nearby clicks share
 #' a cache entry instead of each spawning a fresh multi-decade fetch.
@@ -195,15 +200,15 @@ fetch_point <- function(lat, lon, year_to, year_from = 1991,
   g <- g[order(g$date), ]
 
   focal_from <- max(year_from, year_to - 1)
-  say(sprintf("  soil moisture / humidity, %d-%d", focal_from, year_to))
+  say(sprintf("  humidity, %d-%d", focal_from, year_to))
   fx <- fetch_chunk(lat, lon, focal_from, year_to, HOURLY_FOCAL, "focal",
                     chunk_dir, refresh, pause_seconds)
 
-  # Only rh/soil-temperature come from the focal pass now -- sm_0_7 etc. are
+  # Only rh comes from the focal pass now -- sm_0_7, soilt_0_7, etc. are
   # already in `g` from the long pull (see HOURLY_LONG above) and must NOT be
   # overwritten here, or the climatology gets clobbered back down to
   # focal-years-only.
-  extra <- c("rh_mean", "rh_min", "soilt_0_7")
+  extra <- c("rh_mean", "rh_min")
   i <- match(g$date, fx$date)
   for (v in extra) g[[v]] <- if (is.null(fx[[v]])) NA_real_ else fx[[v]][i]
 
