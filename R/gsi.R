@@ -224,13 +224,44 @@ greenup_pulses <- function(phase) {
 
 # ---- live fuel moisture ------------------------------------------------------
 
-#' Map relative GSI to live fuel moisture. FEMS defaults: herbaceous 30-250 %,
-#' woody 60-200 %. See the note in the Glass Box copy of this file for why the
-#' single-curve rescaling matters -- unchanged here.
+#' Map relative GSI to live fuel moisture, after NFDRS2016.
+#'
+#' Jolly, W.M., Freeborn, P.H., Bradshaw, L.S., Wallace, J. & Brittain, S.
+#' (2024). Modernizing the US National Fire Danger Rating System (version 4).
+#' Environmental Modelling & Software 181, 106181. Equation 10:
+#'
+#'     LFM = Min                                        if GSI' <  GU
+#'           Min + (Max - Min) * (GSI' - GU) / (1 - GU)  if GSI' >= GU
+#'
+#' The ramp starts at the green-up threshold GU, NOT at zero. Earlier versions
+#' of this function used the plain proportional form, which reports far too much
+#' moisture through the lower half of the index -- at GSI' = 0.5 it gives 140 %
+#' herbaceous where Eq. 10 with GU = 0.2 gives 112 %. Against the 120 % load
+#' transfer threshold that is the difference between none of the fine fuel
+#' counting as dead and some of it doing so. Setting gu = 0 recovers the old
+#' behaviour exactly, which is why it stays a parameter rather than a constant.
+#'
+#' GU is a third undocumented lever, alongside the daylength and VPD
+#' conventions. Three sources give three values: Jolly et al. (2024) Table 6
+#' says 0.2; NWCG PMS 437 describes herbaceous moisture sitting at its minimum
+#' below GSI 0.5; the FEMS operational defaults use a green-up threshold of 0.3.
+#' At GSI' = 0.5 those give 112 %, 30 % and 96 % herbaceous moisture -- 8 %,
+#' 100 % and 27 % of the fine fuel load transferred to dead. Establish which one
+#' the operational code uses before tuning anything against it.
+#'
+#' Note what this mapping still means: herbaceous and woody moisture are the
+#' SAME curve rescaled to different endpoints. Rooting depth, response lag, and
+#' whether senescence is reversible are all represented by nothing more than a
+#' different pair of numbers -- and now a second GU, which is the first place
+#' the two fuel classes are allowed to differ in shape rather than in scale.
+#'
+#' @param gu green-up threshold below which moisture is held at its minimum
 #'
 #' @param gate if TRUE, hold at the minimum whenever the site is dormant.
-gsi_to_lfm <- function(gsi_rel, phase, lo, hi, gate = TRUE) {
-  v <- lo + (hi - lo) * gsi_rel
+gsi_to_lfm <- function(gsi_rel, phase, lo, hi, gate = TRUE, gu = 0.2) {
+  gu <- min(max(gu, 0), 0.999)          # gu = 1 would divide by zero
+  v  <- ifelse(gsi_rel < gu, lo,
+               lo + (hi - lo) * (gsi_rel - gu) / (1 - gu))
   if (gate) v[phase == "dormant"] <- lo
   v
 }
@@ -264,6 +295,7 @@ scout_defaults <- function() {
     gsi_max = 1.0, greenup = 0.3, persist = 3,
     lhfm_lo = 30, lhfm_hi = 250,
     lwfm_lo = 60, lwfm_hi = 200,
+    gu_herb = 0.2, gu_woody = 0.2,   # Jolly et al. (2024) Table 6; FEMS is silent
     gate = TRUE
   )
 }
@@ -311,8 +343,10 @@ run_gsi <- function(met, lat, p = scout_defaults()) {
 
   d$phase <- gsi_phase2(d$gsi_rel, p$greenup, p$persist)
 
-  d$lhfm <- gsi_to_lfm(d$gsi_rel, d$phase, p$lhfm_lo, p$lhfm_hi, p$gate)
-  d$lwfm <- gsi_to_lfm(d$gsi_rel, d$phase, p$lwfm_lo, p$lwfm_hi, p$gate)
+  d$lhfm <- gsi_to_lfm(d$gsi_rel, d$phase, p$lhfm_lo, p$lhfm_hi, p$gate,
+                       p$gu_herb %||% 0.2)
+  d$lwfm <- gsi_to_lfm(d$gsi_rel, d$phase, p$lwfm_lo, p$lwfm_hi, p$gate,
+                       p$gu_woody %||% 0.2)
   d$herb_dead_frac <- herb_load_transfer(d$lhfm)
 
   # which sub-index is binding on each day

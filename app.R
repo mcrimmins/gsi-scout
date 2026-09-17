@@ -67,7 +67,8 @@ param_accordion <- accordion(
     checkboxInput("show_fems_ghost", "Show FEMS defaults for comparison (dashed)",
                   TRUE),
     helpText("Draws the GSI curve under FEMS's seed values as a dashed ghost",
-            "line on the GSI model tab's plot, alongside your current sliders."),
+            "line on the GSI model and Sub-index ramps tabs, alongside your",
+            "current sliders."),
     tags$hr(),
     sliderInput("gsi_max", "GSImax (site calibration)", 0.2, 1.0, DEF$gsi_max, 0.01),
     fems_note(sprintf("%.0f", DEF$gsi_max)),
@@ -89,7 +90,15 @@ param_accordion <- accordion(
     fems_note(sprintf("herbaceous %d-%d%%", DEF$lhfm_lo, DEF$lhfm_hi)),
     sliderInput("lwfm_lo", "woody, at dormant", 0, 100, DEF$lwfm_lo, 1),
     sliderInput("lwfm_hi", "woody, at GSImax", 100, 250, DEF$lwfm_hi, 1),
-    fems_note(sprintf("woody %d-%d%%", DEF$lwfm_lo, DEF$lwfm_hi))
+    fems_note(sprintf("woody %d-%d%%", DEF$lwfm_lo, DEF$lwfm_hi)),
+    sliderInput("gu_herb", "herbaceous green-up threshold GU", 0, 0.9, DEF$gu_herb, 0.05),
+    sliderInput("gu_woody", "woody green-up threshold GU", 0, 0.9, DEF$gu_woody, 0.05),
+    helpText(HTML("Moisture ramps from its minimum at <b>GU</b> to its maximum
+                   at GSImax (Jolly et al. 2024, Eq. 10) &mdash; not from zero.
+                   FEMS does not list this one. The paper's default is
+                   <b>0.2</b>; NWCG PMS 437 describes <b>0.5</b>; FEMS's own
+                   green-up threshold above is 0.3. Setting GU to 0 restores the
+                   plain proportional mapping."))
   ),
 
   accordion_panel(
@@ -150,8 +159,9 @@ main_tabs <- navset_card_tab(
     tags$ul(
       tags$li(strong("Climatology reference"), " -- was this a normal year",
               "or an unusual one, before any modeling is applied."),
-      tags$li(strong("Sub-index ramps"), " -- what each slider actually",
-              "does, compared against the standard default."),
+      tags$li(strong("Sub-index ramps"), " -- the GSI curve (with its own",
+              "climatology) up top, then what each slider actually does,",
+              "compared against the standard default."),
       tags$li(strong("GSI model"), " -- the full picture: green-up/dormancy",
               "timing, live fuel moisture, and the index itself.")
     ),
@@ -186,26 +196,42 @@ main_tabs <- navset_card_tab(
 
   nav_panel(
     "Sub-index ramps",
-    p("What each slider actually does -- index value (0-1) across the raw",
-      "variable's full range, current settings vs. FEMS's seed ramp",
-      "(dashed). No data needed, so this doesn't require",
-      "\"Get data for this point\" first; precipitation and soil moisture",
-      "show their shape even while their control is off. Adjust the",
-      "sliders under each plot directly -- they're the same controls that",
-      "feed the GSI model tab, just relocated here, next to what they do."),
+    p("The GSI curve for the selected point/year sits above, so you can see",
+      "what these ramps actually produce while adjusting them. Below: what",
+      "each slider does -- index value (0-1) across the raw variable's",
+      "full range, current settings vs. FEMS's seed ramp (dashed). The",
+      "ramp cards need no data, so they don't require \"Get data for this",
+      "point\" first; precipitation and soil moisture show their shape",
+      "even while their control is off. Adjust the sliders under each plot",
+      "directly -- they're the same controls that feed the GSI model tab,",
+      "just relocated here, next to what they do."),
 
-    ## Each card gets fill = FALSE -- without it, bslib stretches/shrinks the
-    ## card to match its grid row's computed height, which was clipping the
-    ## plot down to a few pixels tall (the "figure margins too large" error
-    ## screenshot Mike sent 2026-09-15) instead of letting it hug its actual
-    ## content. One range slider per variable, not a lo/hi pair -- same
-    ## request, "one slider that sets the range."
-    layout_columns(
-      col_widths = c(6, 6), fill = FALSE,
+    ## Same card(fill = FALSE) fix as every ramp card below -- without it,
+    ## bslib collapses this card's height before the plot has any room to
+    ## draw, which is exactly the "figure margins too large" error (see the
+    ## comment on the ramp grid just below; same cause, same fix, just missed
+    ## here the first time).
+    card(
+      fill = FALSE,
+      uiOutput("ramp_gsi_hint"),
+      plotOutput("ramp_gsi_plot", height = 300)
+    ),
+    tags$hr(),
+
+    ## layout_column_wrap(width = 1/3), not a fixed 2-column layout_columns()
+    ## -- 5 cards in 2 columns leaves the 5th (soil moisture) alone on its own
+    ## row, half-empty. 3 columns packs them 3-then-2, and wraps down to fewer
+    ## columns on a narrower window on its own (2026-09-17, at Mike's request
+    ## -- the ramps tab plus the GSI plot above it didn't fit without a lot of
+    ## scrolling). Ramp plot heights trimmed 420 -> 320 for the same reason;
+    ## still readable, just not as tall. Each card keeps fill = FALSE -- see
+    ## the comment above for why that matters.
+    layout_column_wrap(
+      width = 1/3, fill = FALSE, heights_equal = "row",
 
       card(
         fill = FALSE,
-        plotOutput("ramp_tmin", height = 420),
+        plotOutput("ramp_tmin", height = 320),
         tags$b("Minimum temperature (°C)"),
         sliderInput("tmin_range", "limiting → unconstrained", -15, 25,
                     c(DEF$tmin_lo, DEF$tmin_hi), 0.5),
@@ -214,7 +240,7 @@ main_tabs <- navset_card_tab(
 
       card(
         fill = FALSE,
-        plotOutput("ramp_vpd", height = 420),
+        plotOutput("ramp_vpd", height = 320),
         tags$b("Vapour pressure deficit (Pa)"),
         sliderInput("vpd_range", "unconstrained → limiting", 0, 9000,
                     c(DEF$vpd_lo, DEF$vpd_hi), 25),
@@ -228,7 +254,7 @@ main_tabs <- navset_card_tab(
 
       card(
         fill = FALSE,
-        plotOutput("ramp_photo", height = 420),
+        plotOutput("ramp_photo", height = 320),
         tags$b("Daylength (hours)"),
         sliderInput("photo_range", "limiting → unconstrained", 6, 16,
                     c(DEF$photo_lo / 3600, DEF$photo_hi / 3600), 0.1),
@@ -246,7 +272,7 @@ main_tabs <- navset_card_tab(
 
       card(
         fill = FALSE,
-        plotOutput("ramp_precip", height = 420),
+        plotOutput("ramp_precip", height = 320),
         checkboxInput("use_precip", "Add a precipitation control", DEF$use_precip),
         conditionalPanel("input.use_precip",
           sliderInput("precip_window", "accumulation window (days)", 1, 90,
@@ -260,7 +286,7 @@ main_tabs <- navset_card_tab(
 
       card(
         fill = FALSE,
-        plotOutput("ramp_soilm", height = 420),
+        plotOutput("ramp_soilm", height = 320),
         helpText("Not part of FEMS or NFDRS2016 -- GSI Scout's own addition, an
                  open question rather than an established control. Which depth
                  suits herbaceous vs. woody fuels is exactly what this control
@@ -403,6 +429,8 @@ server <- function(input, output, session) {
     updateSliderInput(session, "lhfm_hi", value = d$lhfm_hi)
     updateSliderInput(session, "lwfm_lo", value = d$lwfm_lo)
     updateSliderInput(session, "lwfm_hi", value = d$lwfm_hi)
+    updateSliderInput(session, "gu_herb", value = d$gu_herb)
+    updateSliderInput(session, "gu_woody", value = d$gu_woody)
   })
 
   # current parameter list, built from the UI every time an input changes
@@ -428,7 +456,9 @@ server <- function(input, output, session) {
       combine = "product", window = input$window,
       gsi_max = input$gsi_max, greenup = input$greenup, persist = input$persist,
       lhfm_lo = input$lhfm_lo, lhfm_hi = input$lhfm_hi,
-      lwfm_lo = input$lwfm_lo, lwfm_hi = input$lwfm_hi, gate = TRUE
+      lwfm_lo = input$lwfm_lo, lwfm_hi = input$lwfm_hi,
+      gu_herb = input$gu_herb %||% 0.2, gu_woody = input$gu_woody %||% 0.2,
+      gate = TRUE
     )
   })
 
@@ -456,6 +486,17 @@ server <- function(input, output, session) {
     d <- met_year()
     dd <- run_gsi(d, pt$lat, scout_defaults())
     dd[dd$year == as.integer(input$sel_year), ]
+  })
+
+  # Day-of-year GSI climatology, current sliders -- same compute_climatology()
+  # the "Climatology reference" tab runs on the raw driving variables, called
+  # here on the model's own multi-year gsi_all_years() output instead. Shared
+  # by both places plot_gsi() now appears (this tab and "GSI model") so they
+  # stay in sync rather than each computing it separately.
+  gsi_climatology <- reactive({
+    req(gsi_all_years())
+    compute_climatology(gsi_all_years(), "gsi", CLIMATOLOGY_BAND,
+                        as.integer(input$sel_year))
   })
 
   output$climatology_plot <- renderPlot({
@@ -495,7 +536,25 @@ server <- function(input, output, session) {
   output$model_plot <- renderPlot({
     req(gsi_sel())
     dd <- if (isTRUE(input$show_fems_ghost)) gsi_fems() else NULL
-    plot_model_stack(gsi_sel(), params(), dd)
+    plot_model_stack(gsi_sel(), params(), dd, gsi_climatology(), CLIMATOLOGY_BAND)
+  })
+
+  # GSI plot repeated on "Sub-index ramps", above the ramp cards -- same
+  # underlying plot_gsi() call as the "GSI model" tab's own GSI panel, kept
+  # in sync automatically since both read from the same reactives. Unlike
+  # the ramp cards below it, this one needs fetched data, so a hint stands
+  # in for it until "Get data for this point" has been clicked.
+  output$ramp_gsi_hint <- renderUI({
+    if (is.null(met())) {
+      p(class = "text-muted small mb-2",
+        "Click the map, then “Get data for this point,” to see the GSI curve here.")
+    }
+  })
+
+  output$ramp_gsi_plot <- renderPlot({
+    req(gsi_sel())
+    dd <- if (isTRUE(input$show_fems_ghost)) gsi_fems() else NULL
+    plot_gsi(gsi_sel(), params(), dd, gsi_climatology(), CLIMATOLOGY_BAND)
   })
 
   output$model_status <- renderUI({

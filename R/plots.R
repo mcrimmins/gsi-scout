@@ -26,6 +26,8 @@ COL <- c(tmin = "#2166AC", vpd = "#B2182B", photo = "#1B7837",
 PHASE_COL <- c(dormant = "#D9D9D9", greenup = "#A6D96A")
 GHOST <- "#9E9E9E"
 FEMS_COL <- "#E08214"
+CLIM_COL <- "#2166AC"   # GSI's own day-of-year climatology band -- reuses
+                        # tmin's blue; no clash, the GSI panel has no tmin line
 
 ## Sizes bumped +2pt across the board (2026-09-15, at Mike's request -- the
 ## ramp and GSI model tabs were hard to read) from the original base_size 12 /
@@ -140,29 +142,63 @@ plot_subindex <- function(d, p) {
     base_theme + theme(legend.position = "top", legend.title = element_blank())
 }
 
-#' GSI, current parameters vs. FEMS defaults (ghost line), with the
-#' green-up/dormant threshold marked.
+#' GSI, current parameters vs. FEMS defaults (ghost line) and its own
+#' day-of-year climatology, with the green-up/dormant threshold marked.
+#'
+#' The climatology band reuses compute_climatology() -- same function the
+#' "Climatology reference" tab runs on the raw driving variables, just called
+#' here with `var = "gsi"` on the model's own multi-year output instead. Its
+#' `doy` index is projected onto `d`'s year (`clim$date <- Jan 1 of that year
+#' + doy - 1`) so it overlays on the same date-based x-axis as everything
+#' else in the model stack, rather than switching this one panel to a
+#' doy axis the other three panels don't share.
+#'
 #' @param d run_gsi() output under the current UI parameters
+#' @param p params() list
 #' @param dd run_gsi() output under scout_defaults() (FEMS seed values), or
 #'   NULL to omit the ghost comparison
-plot_gsi <- function(d, p, dd = NULL) {
+#' @param clim compute_climatology(gsi_all_years, "gsi", band_years, sel_year)
+#'   output (doy, lo, mean, hi), or NULL to omit the climatology band
+#' @param band_years the climatology band `clim` was computed over, for the
+#'   subtitle label only -- purely cosmetic, doesn't affect what's drawn
+plot_gsi <- function(d, p, dd = NULL, clim = NULL, band_years = c(1991, 2020)) {
   xs <- scale_x_date(date_labels = "%b", date_breaks = "1 month", expand = c(0.005, 0))
-  g <- ggplot(d, aes(date)) +
-    geom_line(aes(y = igsi), colour = "grey72", linewidth = 0.3)
+  sel_year <- as.integer(format(d$date[1], "%Y"))
+
+  g <- ggplot(d, aes(date))
+
+  if (!is.null(clim)) {
+    cd <- clim
+    cd$date <- as.Date(sprintf("%d-01-01", sel_year)) + cd$doy - 1
+    g <- g +
+      geom_ribbon(data = cd, aes(x = date, ymin = lo, ymax = hi), inherit.aes = FALSE,
+                 fill = CLIM_COL, alpha = 0.15) +
+      geom_line(data = cd, aes(x = date, y = mean), inherit.aes = FALSE,
+               colour = CLIM_COL, linewidth = 0.5, linetype = "22", alpha = 0.75)
+  }
+
+  g <- g + geom_line(aes(y = igsi), colour = "grey72", linewidth = 0.3)
   if (!is.null(dd))
     g <- g + geom_line(data = dd, aes(y = gsi), colour = GHOST, linewidth = 0.7,
                        linetype = "42")
+
+  sub <- if (!is.null(dd))
+    "thin grey = daily · dashed = FEMS defaults · black = current"
+  else
+    "thin grey = daily · black = smoothed"
+  sub <- paste0(sub, " · green line = green-up/dormant threshold")
+  if (!is.null(clim))
+    sub <- paste0(sub, sprintf("\nblue band = %d-%d day-of-year climatology (10th-90th pct, %d excluded)",
+                               band_years[1], band_years[2], sel_year))
+
   g +
     geom_line(aes(y = gsi), colour = "#111111", linewidth = 1.0) +
     geom_hline(yintercept = p$greenup * p$gsi_max, colour = "#A6D96A", linewidth = 0.5) +
     geom_hline(yintercept = p$gsi_max, colour = "grey40", linewidth = 0.4, linetype = "22") +
     scale_y_continuous(limits = c(0, 1)) + xs +
-    labs(title = "GSI",
-        y = "GSI",
-        subtitle = if (!is.null(dd))
-          "thin grey = daily · dashed = FEMS defaults · black = current · green line = green-up/dormant threshold"
-        else "thin grey = daily · black = smoothed · green line = green-up/dormant threshold") +
-    base_theme + theme(plot.subtitle = element_text(size = 9.5, colour = "grey45"))
+    labs(title = "GSI", y = "GSI", subtitle = sub) +
+    base_theme + theme(plot.subtitle = element_text(size = 9.5, colour = "grey45",
+                                                     lineheight = 1.05))
 }
 
 #' Greenup / dormant phase band.
@@ -195,8 +231,9 @@ plot_lfm <- function(d) {
 }
 
 #' The model-output stack: sub-indices, GSI, phase, fuel moisture.
-plot_model_stack <- function(d, p, dd = NULL) {
-  (plot_subindex(d, p) / plot_gsi(d, p, dd) / plot_phase(d) / plot_lfm(d)) +
+#' @param clim,band_years passed straight through to plot_gsi() -- see there
+plot_model_stack <- function(d, p, dd = NULL, clim = NULL, band_years = c(1991, 2020)) {
+  (plot_subindex(d, p) / plot_gsi(d, p, dd, clim, band_years) / plot_phase(d) / plot_lfm(d)) +
     plot_layout(heights = c(1.3, 1.8, 0.4, 1.2))
 }
 

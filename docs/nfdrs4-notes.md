@@ -158,6 +158,40 @@ alongside) Scott & Burgan (2005), and Scott & Burgan would need to be
 re-framed as "the published curing method GSI Scout doesn't currently use"
 rather than the model's basis.
 
+## Future feature idea: separate smoothing windows for herb vs. woody
+
+Not from NFDRS4 directly -- logged 2026-09-15 after a manager review comment
+on the app ("the herbaceous doesn't make sense, it should crash harder than
+woody").
+
+Right now `run_gsi()` computes ONE smoothed GSI series (`d$gsi_rel`, one
+shared `window`) and feeds it into `gsi_to_lfm()` for both herb and woody.
+The two fuel classes differ only in their Min/Max endpoints and (already
+independently adjustable) GU threshold -- never in *when* they respond.
+Physically, fine, shallow-rooted herbaceous fuel should track a shorter,
+more recent dry/wet signal (it crashes fast in a dry spell), while woody
+fuel should integrate over a longer window (it's buffered, lags, and dries
+out more gradually). See the "how GU shapes the curve" discussion below for
+how far raising `gu_herb` above `gu_woody` alone can already get toward
+that -- but the response-*timing* difference (short window for herb, long
+window for woody) is a separate, complementary lever that the model doesn't
+expose yet.
+
+This is consistent with how NFDRS4 itself is structured: `HerbFM` and
+`WoodyFM` are separate `LiveFuelMoisture` objects, each with its own
+independently settable `SetMAPeriod()` -- NFDRS4's own CLI just happens to
+pass the same value to both by default (see the smoothing-window
+discrepancy above), so nothing here contradicts the reference code, it's
+just an option NFDRS4 leaves on the table too.
+
+**Action:** add `herb_window` / `woody_window` (or similar) to
+`scout_defaults()` and `run_gsi()`, computing two smoothed GSI series
+instead of one, each feeding its own `gsi_to_lfm()` call. Would need two
+sliders in "Phase & scaling" in place of the current single "GSI running
+average length" slider. Not started -- worth trying the GU-threshold change
+first (no code needed) and seeing whether that alone addresses the manager
+feedback before taking this on.
+
 ## Not yet checked
 
 - `lib/NFDRS4/src/deadfuelmoisture.cpp`/`.h` -- dead fuel moisture, not
