@@ -580,6 +580,18 @@ server <- function(input, output, session) {
                         as.integer(input$sel_year))
   })
 
+  # Per-variable day-of-year climatology for the Climatology reference tab's
+  # hover box (2026-09-19) -- same vars/band/exclusion as the dashed
+  # climatology line each panel already draws, computed once here rather
+  # than per-hover-event in the (frequently-firing) hover box below.
+  climatology_tables <- reactive({
+    req(met())
+    climatology_table_all(met_year(), as.integer(input$sel_year),
+                          vpd_col = vpd_driver_col(input$vpd_driver),
+                          soilm_col = input$soilm_depth %||% "sm_0_7",
+                          band_years = CLIMATOLOGY_BAND)
+  })
+
   output$climatology_plot <- renderGirafe({
     req(met())
     m <- met_year()
@@ -607,7 +619,16 @@ server <- function(input, output, session) {
 
   # Values for whichever day is currently hovered on the climatology grid --
   # same variable list/order/colour as the plot itself (climatology_panel_vars(),
-  # R/plots.R), so this box and the panels never drift out of sync.
+  # R/plots.R), so this box and the panels never drift out of sync. Also
+  # shows the day-of-year climatological mean (2026-09-19, at Mike's
+  # request) next to the selected year's value, from climatology_tables()
+  # above -- the same numbers behind each panel's own dashed climatology
+  # line, so this box and the plot always agree.
+  fmt_val <- function(x, units) {
+    if (is.null(x) || length(x) == 0 || is.na(x)) return("--")
+    sprintf("%s %s", format(round(x, 2)), units)
+  }
+
   output$climatology_hover_box <- renderUI({
     req(met())
     hov <- input$climatology_plot_hovered
@@ -619,22 +640,36 @@ server <- function(input, output, session) {
     # repeats every year, so this must also pin the year or it silently
     # picks up whichever year happens to sort first (1991, the earliest).
     m <- met_year()
-    row <- m[m$doy == as.integer(hov) & m$year == as.integer(input$sel_year), ]
+    hov_doy <- as.integer(hov)
+    row <- m[m$doy == hov_doy & m$year == as.integer(input$sel_year), ]
     if (nrow(row) == 0) return(helpText("Hover any panel to see that day's values here."))
     row <- row[1, ]
     vars <- climatology_panel_vars(m, vpd_col = vpd_driver_col(input$vpd_driver),
                                    soilm_col = input$soilm_depth %||% "sm_0_7")
+    clim <- climatology_tables()
     tagList(
       tags$strong(format(row$date, "%B %d, %Y")),
       tags$table(class = "table table-sm", style = "margin-top: 6px;",
+        tags$thead(
+          tags$tr(
+            tags$th(""),
+            tags$th(style = "text-align:right;", as.character(input$sel_year)),
+            tags$th(style = "text-align:right; font-weight:400; color:grey;",
+                    sprintf("%d-%d avg", CLIMATOLOGY_BAND[1], CLIMATOLOGY_BAND[2]))
+          )
+        ),
         tags$tbody(
           lapply(vars, function(v) {
             val <- row[[v$var]]
+            ct <- clim[[v$var]]
+            clim_mean <- if (is.null(ct)) NA_real_ else ct$mean[ct$doy == hov_doy]
             tags$tr(
               tags$td(style = sprintf("color:%s; font-weight:600; padding-right: 8px;", v$colour),
                       v$label),
               tags$td(style = "text-align:right; white-space:nowrap;",
-                      if (is.na(val)) "--" else sprintf("%s %s", format(round(val, 2)), v$units))
+                      fmt_val(val, v$units)),
+              tags$td(style = "text-align:right; white-space:nowrap; color:grey;",
+                      fmt_val(clim_mean, v$units))
             )
           })
         )

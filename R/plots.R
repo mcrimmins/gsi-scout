@@ -155,6 +155,21 @@ climatology_panel_vars <- function(met, vpd_col, soilm_col = NULL) {
   vars
 }
 
+#' Per-variable day-of-year climatology (doy, lo, mean, hi), for every
+#' variable plot_climatology_panel() shows -- one compute_climatology() call
+#' per variable, keyed by column name. 2026-09-19, at Mike's request: this
+#' is what lets app.R's hover value box show the climatological mean next to
+#' the selected year's value, using the SAME band/exclusion logic as the
+#' dashed climatology line each panel already draws (compute_climatology()),
+#' so the two can't disagree.
+climatology_table_all <- function(met, sel_year, vpd_col, soilm_col = NULL,
+                                  band_years = c(1991, 2020)) {
+  vars <- climatology_panel_vars(met, vpd_col, soilm_col)
+  out <- lapply(vars, function(v) compute_climatology(met, v$var, band_years, sel_year))
+  names(out) <- vapply(vars, function(v) v$var, character(1))
+  out
+}
+
 #' The full climatology reference panel: daylength, minimum temperature,
 #' soil temperature, VPD (selected driver), precipitation, and soil moisture
 #' -- in that order (2026-09-18, at Mike's request). Independent of the model
