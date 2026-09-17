@@ -9,3 +9,4 @@
 ## excludes its contents instead, which the negation can then override.
 data/cache/*
 !data/cache/.gitkeep
+rsconnect/ 
