@@ -46,6 +46,18 @@ suppressPackageStartupMessages(library(jsonlite))
 
 API   <- "https://archive-api.open-meteo.com/v1/archive"
 MODEL <- "era5"   # era5 (0.25 deg, 1940-) | era5_land (0.1 deg, 1950-)
+ERA5_RES <- 0.25   # keep in sync with MODEL -- 0.1 if MODEL ever becomes era5_land
+
+#' The native ERA5 grid box bracketing (lat, lon) -- 2026-09-18, at Mike's
+#' request, so "Map & point" can show how coarse this actually is. NOT a
+#' nearest-cell average: Open-Meteo bilinearly interpolates between the four
+#' native grid points surrounding the query point, so this box's four
+#' corners are those four points, not a cell centred on (lat, lon).
+era5_grid_box <- function(lat, lon, res = ERA5_RES) {
+  lat0 <- floor(lat / res) * res
+  lon0 <- floor(lon / res) * res
+  list(lat0 = lat0, lat1 = lat0 + res, lon0 = lon0, lon1 = lon0 + res)
+}
 
 DAILY <- c(
   "temperature_2m_max", "temperature_2m_min", "temperature_2m_mean",

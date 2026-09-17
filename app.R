@@ -141,6 +141,17 @@ main_tabs <- navset_card_tab(
     "Map & point",
     p("Click the map to choose a point, then use \"Get data for this point\"",
       "in the sidebar. Base layer switcher is in the top-right of the map."),
+    ## Dashed box (2026-09-18, at Mike's request): the ERA5 grid box
+    ## bracketing the pin -- NOT a "your point lives in this cell" box.
+    ## Open-Meteo interpolates between the four native ERA5 grid points at
+    ## this box's corners, ~28 km apart -- worth seeing at a glance, since
+    ## it's easy to forget a single clicked point is standing in for that
+    ## whole area.
+    helpText(HTML(
+      "Dashed box: the ERA5 grid cell (0.25°, ~28 km) bracketing the pin --",
+      "Open-Meteo interpolates weather between its four corners, not a",
+      "point measurement at the pin itself."
+    )),
     leafletOutput("map", height = 640)
   ),
 
@@ -373,31 +384,56 @@ server <- function(input, output, session) {
   met <- reactiveVal(NULL)
   status <- reactiveVal("Click the map, then \"Get data for this point\".")
 
+  # Selection marker + its bracketing ERA5 grid box (2026-09-18), on `map` --
+  # a leaflet map widget (initial render) or a leafletProxy (the two
+  # point-setting observers below). One function so the three call sites
+  # can't drift out of sync with each other. interactive = FALSE on the
+  # rectangle so its border can't swallow a map click meant to move the pin.
+  draw_point <- function(map, lat, lon) {
+    gb <- era5_grid_box(lat, lon)
+    map |>
+      addRectangles(lng1 = gb$lon0, lat1 = gb$lat0, lng2 = gb$lon1, lat2 = gb$lat1,
+                    layerId = "era5_grid", fill = FALSE,
+                    color = "#444444", weight = 1.5, dashArray = "4,3",
+                    options = pathOptions(interactive = FALSE)) |>
+      addMarkers(lng = lon, lat = lat, layerId = "sel")
+  }
+
+  ## isolate() around the whole body is load-bearing, not decoration:
+  ## without it, reading pt$lat/pt$lon below makes this ENTIRE block re-run
+  ## on every pt change (i.e. every map click), tearing down and rebuilding
+  ## the whole widget at zoom 5 -- wiping out whatever pan/zoom the user had
+  ## and undoing the leafletProxy() updates the click observers just made a
+  ## moment earlier. Those observers are the only thing that should move the
+  ## view after this initial render; this block just needs pt's value once,
+  ## at startup.
   output$map <- renderLeaflet({
-    # No API key needed for any of these. USGS Topo is the default: it's the
-    # standard US topographic product land management agencies already use,
-    # and (unlike CartoDB.Positron, which now gates its tiles behind an API
-    # key -- see the "API KEY REQUIRED" watermark that prompted this change)
-    # it bakes in terrain shading, roads, towns, and often land-unit
-    # boundaries (national forests, wilderness areas) as part of the base
-    # map itself. Esri's topo and imagery layers are offered as alternates
-    # via the layer switcher (top right of the map) -- global coverage,
-    # where USGS Topo is US/territories only.
-    leaflet() |>
-      addTiles(
-        urlTemplate = "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",
-        attribution = "USGS The National Map",
-        group = "USGS Topo (land units, terrain, roads)"
-      ) |>
-      addProviderTiles(providers$Esri.WorldTopoMap, group = "Esri Topo") |>
-      addProviderTiles(providers$Esri.WorldImagery, group = "Esri Imagery") |>
-      addLayersControl(
-        baseGroups = c("USGS Topo (land units, terrain, roads)",
-                       "Esri Topo", "Esri Imagery"),
-        options = layersControlOptions(collapsed = FALSE)
-      ) |>
-      setView(lng = pt$lon, lat = pt$lat, zoom = 5) |>
-      addMarkers(lng = pt$lon, lat = pt$lat, layerId = "sel")
+    isolate({
+      # No API key needed for any of these. USGS Topo is the default: it's the
+      # standard US topographic product land management agencies already use,
+      # and (unlike CartoDB.Positron, which now gates its tiles behind an API
+      # key -- see the "API KEY REQUIRED" watermark that prompted this change)
+      # it bakes in terrain shading, roads, towns, and often land-unit
+      # boundaries (national forests, wilderness areas) as part of the base
+      # map itself. Esri's topo and imagery layers are offered as alternates
+      # via the layer switcher (top right of the map) -- global coverage,
+      # where USGS Topo is US/territories only.
+      leaflet() |>
+        addTiles(
+          urlTemplate = "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",
+          attribution = "USGS The National Map",
+          group = "USGS Topo (land units, terrain, roads)"
+        ) |>
+        addProviderTiles(providers$Esri.WorldTopoMap, group = "Esri Topo") |>
+        addProviderTiles(providers$Esri.WorldImagery, group = "Esri Imagery") |>
+        addLayersControl(
+          baseGroups = c("USGS Topo (land units, terrain, roads)",
+                         "Esri Topo", "Esri Imagery"),
+          options = layersControlOptions(collapsed = FALSE)
+        ) |>
+        setView(lng = pt$lon, lat = pt$lat, zoom = 5) |>
+        draw_point(pt$lat, pt$lon)
+    })
   })
 
   observeEvent(input$map_click, {
@@ -405,7 +441,8 @@ server <- function(input, output, session) {
     pt$lon <- input$map_click$lng
     leafletProxy("map") |>
       clearMarkers() |>
-      addMarkers(lng = pt$lon, lat = pt$lat, layerId = "sel")
+      clearShapes() |>
+      draw_point(pt$lat, pt$lon)
     status(sprintf("Point set to %.3f, %.3f. Click \"Get data for this point\".",
                    pt$lat, pt$lon))
   })
@@ -445,8 +482,9 @@ server <- function(input, output, session) {
     pt$lon <- TEST_LON
     leafletProxy("map") |>
       clearMarkers() |>
+      clearShapes() |>
       setView(lng = pt$lon, lat = pt$lat, zoom = 8) |>
-      addMarkers(lng = pt$lon, lat = pt$lat, layerId = "sel")
+      draw_point(pt$lat, pt$lon)
     do_fetch(TEST_LAT, TEST_LON)
   })
 
