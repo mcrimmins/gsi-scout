@@ -14,6 +14,12 @@
 
 library(ggplot2)
 library(patchwork)
+## ggiraph powers the "Climatology reference" tab's hover-linked crosshair
+## (2026-09-18). Guarded, not a plain library() call: if it's missing this
+## whole file must still source cleanly so every OTHER tab keeps working --
+## only a call with interactive = TRUE would then fail, with a clear "no
+## package called 'ggiraph'" error instead of killing the app at startup.
+if (requireNamespace("ggiraph", quietly = TRUE)) library(ggiraph)
 
 if (!grepl("UTF-8", Sys.getlocale("LC_CTYPE"), ignore.case = TRUE)) {
   for (loc in c("C.UTF-8", "en_US.UTF-8", "C.utf8", "en_US.utf8")) {
@@ -22,7 +28,7 @@ if (!grepl("UTF-8", Sys.getlocale("LC_CTYPE"), ignore.case = TRUE)) {
 }
 
 COL <- c(tmin = "#2166AC", vpd = "#B2182B", photo = "#1B7837",
-        precip = "#6A3D9A", soilm = "#01665E")
+        precip = "#6A3D9A", soilm = "#01665E", soilt = "#B35806")
 PHASE_COL <- c(dormant = "#D9D9D9", greenup = "#A6D96A")
 GHOST <- "#9E9E9E"
 FEMS_COL <- "#E08214"
@@ -63,19 +69,43 @@ compute_climatology <- function(met, var, band_years, sel_year) {
   )
 }
 
+#' Invisible per-day-of-year hover targets for the ggiraph-linked climatology
+#' grid (2026-09-18). One full-height geom_rect_interactive() per row of
+#' `sel`, tagged with data_id = doy. Every panel in plot_climatology_panel()
+#' is built for the same sel_year, so the same doy is the same calendar day
+#' everywhere -- ggiraph highlights matching data_id across every panel in
+#' the girafe() object client-side, and with opts_hover(reactive = TRUE) (set
+#' where the girafe object is built, in app.R) it also updates
+#' input$<outputId>_hovered so a value box can show that day's numbers.
+day_hover_rects <- function(sel) {
+  ggiraph::geom_rect_interactive(
+    data = sel, inherit.aes = FALSE,
+    mapping = aes(xmin = doy - 0.5, xmax = doy + 0.5,
+                 data_id = as.character(doy),
+                 tooltip = format(date, "%b %d, %Y")),
+    ymin = -Inf, ymax = Inf, fill = "grey50", alpha = 0.01, colour = NA
+  )
+}
+
 #' One variable, selected year vs. its climatology band.
 #' @param met fetch_point() output (all years)
 #' @param var column to plot
 #' @param sel_year the focal year
 #' @param band_years climatology band, default 1991-2020
 #' @param label plot title; units y-axis label
+#' @param interactive if TRUE, add ggiraph hover targets (day_hover_rects())
+#'   so this panel participates in the climatology tab's linked crosshair --
+#'   requires the ggiraph package; see plot_climatology_panel().
 plot_climate_var <- function(met, var, sel_year, label, units,
-                             band_years = c(1991, 2020), colour = "#333333") {
+                             band_years = c(1991, 2020), colour = "#333333",
+                             interactive = FALSE) {
   clim <- compute_climatology(met, var, band_years, sel_year)
-  sel  <- met[met$year == sel_year, c("doy", var)]
-  names(sel)[2] <- "value"
+  sel  <- met[met$year == sel_year, c("doy", "date", var)]
+  names(sel)[3] <- "value"
 
-  ggplot() +
+  g <- ggplot()
+  if (interactive) g <- g + day_hover_rects(sel)
+  g <- g +
     geom_ribbon(data = clim, aes(doy, ymin = lo, ymax = hi),
                fill = colour, alpha = 0.15) +
     geom_line(data = clim, aes(doy, mean), colour = colour, alpha = 0.5,
@@ -88,29 +118,60 @@ plot_climate_var <- function(met, var, sel_year, label, units,
         subtitle = sprintf("%d, shaded = %d-%d 10th-90th pct (year excluded)",
                           sel_year, band_years[1], band_years[2])) +
     base_theme + theme(plot.subtitle = element_text(size = 10, colour = "grey45"))
+  g
 }
 
-#' The full climatology reference panel: Tmin, VPD (selected driver),
-#' daylength, precipitation, and soil moisture (if a depth is available).
-#' Independent of the model parameters -- this is the "was this a weird year"
-#' view described in claude/gsi-pointapp-scope.md.
-plot_climatology_panel <- function(met, sel_year, vpd_col, soilm_col = NULL,
-                                   band_years = c(1991, 2020)) {
-  p1 <- plot_climate_var(met, "tmin_c", sel_year, "Minimum temperature", "°C",
-                        band_years, COL[["tmin"]])
-  p2 <- plot_climate_var(met, vpd_col, sel_year, "Vapour pressure deficit", "Pa",
-                        band_years, COL[["vpd"]])
-  p3 <- plot_climate_var(met, "daylight_s", sel_year, "Daylength (ERA5)", "sec",
-                        band_years, COL[["photo"]])
-  p4 <- plot_climate_var(met, "precip_mm", sel_year, "Precipitation", "mm/day",
-                        band_years, COL[["precip"]])
-  if (!is.null(soilm_col) && soilm_col %in% names(met)) {
-    p5 <- plot_climate_var(met, soilm_col, sel_year, "Soil moisture", "m3/m3",
-                          band_years, COL[["soilm"]])
-    (p1 / p2 / p3 / p4 / p5)
-  } else {
-    (p1 / p2 / p3 / p4)
+#' Which variables the climatology panel shows, in what order, and how to
+#' label/colour them -- one source of truth shared by plot_climatology_panel()
+#' (to draw the panels) and app.R's hover value box (to know what to list for
+#' a hovered day, in the same order). Soil temperature and soil moisture are
+#' each included only if their column made it into `met` (see
+#' plot_climatology_panel()'s own note on why that can vary by cache age).
+climatology_panel_vars <- function(met, vpd_col, soilm_col = NULL) {
+  vars <- list(
+    list(var = "daylight_s", label = "Daylength (ERA5)", units = "sec",
+        colour = COL[["photo"]]),
+    list(var = "tmin_c", label = "Minimum temperature", units = "°C",
+        colour = COL[["tmin"]])
+  )
+  if ("soilt_0_7" %in% names(met)) {
+    vars <- c(vars, list(
+      list(var = "soilt_0_7", label = "Soil temperature", units = "°C",
+          colour = COL[["soilt"]])
+    ))
   }
+  vars <- c(vars, list(
+    list(var = vpd_col, label = "Vapour pressure deficit", units = "Pa",
+        colour = COL[["vpd"]]),
+    list(var = "precip_mm", label = "Precipitation", units = "mm/day",
+        colour = COL[["precip"]])
+  ))
+  if (!is.null(soilm_col) && soilm_col %in% names(met)) {
+    vars <- c(vars, list(
+      list(var = soilm_col, label = "Soil moisture", units = "m3/m3",
+          colour = COL[["soilm"]])
+    ))
+  }
+  vars
+}
+
+#' The full climatology reference panel: daylength, minimum temperature,
+#' soil temperature, VPD (selected driver), precipitation, and soil moisture
+#' -- in that order (2026-09-18, at Mike's request). Independent of the model
+#' parameters -- this is the "was this a weird year" view described in
+#' claude/gsi-pointapp-scope.md.
+#' @param interactive if TRUE, every panel gets ggiraph hover targets and the
+#'   result is meant for girafe(), not a plain plotOutput -- see app.R's
+#'   "Climatology reference" tab (2026-09-18). Requires the ggiraph package.
+plot_climatology_panel <- function(met, sel_year, vpd_col, soilm_col = NULL,
+                                   band_years = c(1991, 2020),
+                                   interactive = FALSE) {
+  vars <- climatology_panel_vars(met, vpd_col, soilm_col)
+  panels <- lapply(vars, function(v) {
+    plot_climate_var(met, v$var, sel_year, v$label, v$units,
+                     band_years, v$colour, interactive = interactive)
+  })
+  Reduce(`/`, panels)
 }
 
 # ---- model outputs -------------------------------------------------------------

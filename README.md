@@ -74,7 +74,11 @@ shiny::runApp(".", port = 7777)
 
 Required packages: `shiny`, `bslib`, `leaflet`, `ggplot2`, `patchwork`,
 `jsonlite`, `curl` (optional but recommended -- faster/more reliable HTTP
-than base `readLines()`), `rsconnect` (for deploy only).
+than base `readLines()`), `rsconnect` (for deploy only). `ggiraph` powers
+the hover-linked crosshair on the "Climatology reference" tab (2026-09-18)
+-- it's loaded defensively (`R/plots.R`, `app.R`), so the app still runs
+without it, but that one tab's plot will error if you hover it without
+`ggiraph` installed.
 
 ## Deploying
 

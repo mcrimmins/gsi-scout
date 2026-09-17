@@ -16,6 +16,10 @@
 library(shiny)
 library(bslib)
 library(leaflet)
+## Guarded like R/plots.R's own ggiraph line -- see that file's comment.
+## girafeOutput/renderGirafe/girafe() are only reachable if this succeeds;
+## the "Climatology reference" tab is the one place that needs them.
+if (requireNamespace("ggiraph", quietly = TRUE)) library(ggiraph)
 
 source("R/gsi.R")
 source("R/fetch.R")
@@ -190,8 +194,47 @@ main_tabs <- navset_card_tab(
     "Climatology reference",
     p("The selected year against its 1991-2020 climatology band --",
       "independent of every slider, so this always answers",
-      "“was this a weird year” first."),
-    plotOutput("climatology_plot", height = 1500)
+      "“was this a weird year” first. Hover any panel to line up that",
+      "day across all six and see its values at right."),
+    ## 1800px, not 1500 -- soil temperature joined soil moisture as a normal
+    ## (usually-shown) panel 2026-09-18, so this is typically 6 stacked
+    ## panels now instead of 5. Two columns (2026-09-18): the ggiraph plot
+    ## at left, a sticky hover value box at right -- see
+    ## output$climatology_plot / output$climatology_hover_box below.
+    ##
+    ## Two bslib gotchas found by inspecting the live DOM (a plain static-
+    ## HTML reproduction in dev didn't catch either -- bslib's JS fill/height
+    ## engine never ran there):
+    ##   1. layout_columns()'s grid measured its own row height at ~650px
+    ##      instead of the girafe widget's real ~1800px (it likely sizes
+    ##      before ggiraph's async JS resize), so the sticky box's own
+    ##      containing block ended 1150px too early and it "fell off" past
+    ##      that point. height = "1800px" below pins the row explicitly
+    ##      instead of trusting that measurement.
+    ##   2. fillable/fill = TRUE (the default) makes this grid and its
+    ##      children "fill" items that bslib's JS shrinks to whatever space
+    ##      it thinks is available -- it was collapsing the value-card to
+    ##      ~140px tall with its own internal scrollbar, hiding most of its
+    ##      rows. fillable = FALSE, fill = FALSE opts both columns out of
+    ##      that system so they just take their natural/declared size.
+    layout_columns(
+      col_widths = c(9, 3), height = "1800px", fillable = FALSE, fill = FALSE,
+      girafeOutput("climatology_plot", height = "1800px"),
+      ## Plain markup, not card()/card_header() -- bslib's card() carries
+      ## its own overflow:auto + fill-height CSS (independent of the grid
+      ## settings above), which was the other half of gotcha #2.
+      div(
+        style = paste(
+          "position: sticky; top: 12px; align-self: start;",
+          "border: 1px solid #dee2e6; border-radius: 0.375rem;",
+          "background-color: #fff;"
+        ),
+        div(style = "font-weight: 600; padding: 0.5rem 1rem; border-bottom: 1px solid #dee2e6;",
+            "Day"),
+        div(style = "padding: 0.75rem 1rem;",
+            uiOutput("climatology_hover_box"))
+      )
+    )
   ),
 
   nav_panel(
@@ -499,7 +542,7 @@ server <- function(input, output, session) {
                         as.integer(input$sel_year))
   })
 
-  output$climatology_plot <- renderPlot({
+  output$climatology_plot <- renderGirafe({
     req(met())
     m <- met_year()
     # Soil moisture's climatology shows regardless of the "add a soil
@@ -507,10 +550,58 @@ server <- function(input, output, session) {
     # every slider (see the tab's own description text), and the depth
     # selector still has a value even while its conditionalPanel is hidden,
     # so there's no reason to gate the plot on the toggle too.
-    plot_climatology_panel(m, as.integer(input$sel_year),
-                           vpd_col = vpd_driver_col(input$vpd_driver),
-                           soilm_col = input$soilm_depth %||% "sm_0_7",
-                           band_years = CLIMATOLOGY_BAND)
+    p <- plot_climatology_panel(m, as.integer(input$sel_year),
+                                vpd_col = vpd_driver_col(input$vpd_driver),
+                                soilm_col = input$soilm_depth %||% "sm_0_7",
+                                band_years = CLIMATOLOGY_BAND,
+                                interactive = TRUE)
+    # reactive = TRUE also drives input$climatology_plot_hovered (the
+    # data_id, i.e. day-of-year as a string) for the value box below; the
+    # CSS is the purely client-side highlight, linked across all 6 panels
+    # by day_hover_rects()'s shared data_id (see R/plots.R).
+    girafe(ggobj = p, width_svg = 9, height_svg = 17,
+          options = list(
+            opts_hover(css = "fill:#2166AC;fill-opacity:0.15;", reactive = TRUE),
+            opts_tooltip(opacity = 0.9),
+            opts_sizing(rescale = TRUE)
+          ))
+  })
+
+  # Values for whichever day is currently hovered on the climatology grid --
+  # same variable list/order/colour as the plot itself (climatology_panel_vars(),
+  # R/plots.R), so this box and the panels never drift out of sync.
+  output$climatology_hover_box <- renderUI({
+    req(met())
+    hov <- input$climatology_plot_hovered
+    if (is.null(hov) || !nzchar(hov)) {
+      return(helpText("Hover any panel to see that day's values here."))
+    }
+    # met_year() is every fetched year, not just the selected one (its own
+    # comment/name is about adding vpd_pa, not about filtering) -- doy alone
+    # repeats every year, so this must also pin the year or it silently
+    # picks up whichever year happens to sort first (1991, the earliest).
+    m <- met_year()
+    row <- m[m$doy == as.integer(hov) & m$year == as.integer(input$sel_year), ]
+    if (nrow(row) == 0) return(helpText("Hover any panel to see that day's values here."))
+    row <- row[1, ]
+    vars <- climatology_panel_vars(m, vpd_col = vpd_driver_col(input$vpd_driver),
+                                   soilm_col = input$soilm_depth %||% "sm_0_7")
+    tagList(
+      tags$strong(format(row$date, "%B %d, %Y")),
+      tags$table(class = "table table-sm", style = "margin-top: 6px;",
+        tags$tbody(
+          lapply(vars, function(v) {
+            val <- row[[v$var]]
+            tags$tr(
+              tags$td(style = sprintf("color:%s; font-weight:600; padding-right: 8px;", v$colour),
+                      v$label),
+              tags$td(style = "text-align:right; white-space:nowrap;",
+                      if (is.na(val)) "--" else sprintf("%s %s", format(round(val, 2)), v$units))
+            )
+          })
+        )
+      )
+    )
   })
 
   # Pure functions of the sliders (params()) -- no req(met()) needed, unlike
